@@ -3,6 +3,12 @@ package Algorithm::DiffMatchPatch;
 use warnings;
 use strict;
 
+use List::Util qw/max/;
+
+use constant DIFF_DELETE => -1;
+use constant DIFF_INSERT => 1;
+use constant DIFF_EQUAL => 0;
+
 =head1 NAME
 
 Algorithm::DiffMatchPatch - The great new Algorithm::DiffMatchPatch!
@@ -67,23 +73,23 @@ sub _init() {
   # Number of seconds to map a diff before giving up (0 for infinity).
   $self->{diff_timeout} = 1.0;
   # Cost of an empty edit operation in terms of edit characters.
-  self->{diff_edit_cost} = 4;
+  $self->{diff_edit_cost} = 4;
   # At what point is no match declared (0.0 = perfection, 1.0 = very loose).
-  self->{match_threshold} = 0.5;
+  $self->{match_threshold} = 0.5;
   # How far to search for a match (0 = exact location, 1000+ = broad match).
   # A match this many characters away from the expected location will add
   # 1.0 to the score (0.0 is a perfect match).
-  self->{match_distance} = 1000;
+  $self->{match_distance} = 1000;
   # When deleting a large block of text (over ~64 characters), how close does
   # the contents have to match the expected contents. (0.0 = perfection,
   # 1.0 = very loose).  Note that Match_Threshold controls how closely the
   # end points of a delete need to match.
-  self->{patch_delete_threshold} = 0.5;
+  $self->{patch_delete_threshold} = 0.5;
   # Chunk size for context length.
-  self->{patch_margin} = 4;
+  $self->{patch_margin} = 4;
 
   # The number of bits in an int.
-  self->{match_max_bits} = 32;
+  $self->{match_max_bits} = 32;
   
   return;
 
@@ -118,14 +124,14 @@ sub diff_main {
         return [];
     }
     
-      // Trim off common prefix (speedup).
+      ##// Trim off common prefix (speedup).
 
     my $common_length = $self->diff_common_prefix($text1, $text2);
     my $common_prefix = substr $text1, $common_length;
     $text1 = substr $text1, $common_length;
     $text2 = substr $text2, $common_length;
     
-      // Trim off common suffix (speedup).
+      #// Trim off common suffix (speedup).
 
     $common_length = $self->diff_common_suffix($text1,$text2);
     my $common_suffix = substr $text1, length($text1) - $common_length;
@@ -133,11 +139,11 @@ sub diff_main {
     $text2 = substr $text2, 0, length($text2) - $common_length;
     
     # Compute the diff on the middle block.
-    my $diffs = $self->diff_compute(text1, text2, checklines, deadline);
+    my $diffs = $self->diff_compute($text1, $text2, $checklines, $deadline);
 
     # Restore the prefix and suffix.
-    unshift @$diffs, [ DIFF_EQUAL, common_prefix ] if $common_prefix;
-    push @$diffs, [ DIFF_EQUAL, common_suffix ] if $common_suffix;
+    unshift @$diffs, [ DIFF_EQUAL, $common_prefix ] if $common_prefix;
+    push @$diffs, [ DIFF_EQUAL, $common_suffix ] if $common_suffix;
     
     $self->diff_cleanup_merge($diffs);
     
@@ -147,7 +153,7 @@ sub diff_main {
 
 sub diff_compute {
     my ($self, $text1, $text2, $checklines, $deadline) = @_;
-	my ($long_text, $short_text);
+	my ($long_text, $short_text, $diffs);
 	return [[ DIFF_INSERT, $text2 ]] unless $text1;
 	return [[ DIFF_DELETE, $text1 ]] unless $text2;
 	
@@ -162,7 +168,7 @@ sub diff_compute {
 		# shorter text is inside longer text (speedup)
 		$diffs = [[DIFF_INSERT, substr($long_text, 0, $i) ],
 				[DIFF_EQUAL, $short_text],
-				[DIFF_INSERT, substr($longtext, length($short_text) + $i)]];
+				[DIFF_INSERT, substr($long_text, length($short_text) + $i)]];
 		# swap insertions for deletions if diff is reversed.
 		if(length($text1) > length($text2)) {
 			$diffs->[0][0] = DIFF_DELETE;
@@ -174,7 +180,7 @@ sub diff_compute {
     if(length($short_text) == 1) {
         # single character string
         # After the previous speedup, the character can't be an equality
-        return [[ DIFF_DELETE, $text1, [DIFF_INSERT, $text2]];
+        return [ [DIFF_DELETE, $text1], [DIFF_INSERT, $text2] ];
     }
 
     $long_text = $short_text = undef;
@@ -204,7 +210,8 @@ sub diff_compute {
 
 sub diff_line_mode {
     my ($self, $text1, $text2, $deadline) = @_;
-
+    
+    my $line_array;
     ($text1, $text2, $line_array) = $self->diff_lines_to_chars($text1, $text2);
 
     my $diffs = $self->diff_main($text1, $text2, 0, $deadline);
@@ -358,7 +365,7 @@ sub diff_bisect_split {
     my $diffsb = $self->diff_main($text1b, $text2b, 0, $deadline);
 
     push @$diffsa, @$diffsb;
-    return $dffsa;
+    return $diffsa;
 }
 
 sub diff_lines_to_chars {
@@ -396,7 +403,7 @@ sub diff_lines_to_chars_munge {
         }else{
             push @$chars, chr(length($line_array) - 1);
             $line_hash->{$line} = length($line_array) - 1;
-            push @$char, chr(length($line_array) - 1);
+            push @$chars, chr(length($line_array) - 1);
         }
     }
     return $chars;
@@ -451,13 +458,13 @@ sub diff_common_suffix {
     my $pointer_min = 0;
     my $pointer_max = ($text1_len < $text2_len) ? $text1_len : $text2_len;
     my $pointer_mid = $pointer_max;
-    my $pointer_start = 0;
+    my $pointer_end = 0;
     while($pointer_min < $pointer_mid){
         if(substr($text1, $text1_len - $pointer_mid, $text1_len - $pointer_end) eq substr($text2, $text2_len - $pointer_mid, $text2_len - $pointer_end)){
             $pointer_min = $pointer_mid;
             $pointer_end = $pointer_min;
         }else{
-            $pointer_max = int(($pointer_max - $pointer_min) / 2 + $pointer_min;
+            $pointer_max = int(($pointer_max - $pointer_min) / 2) + $pointer_min;
         }
     }
     return $pointer_mid;
@@ -504,7 +511,7 @@ sub diff_half_match {
     my ($self, $text1, $text2) = @_;
 
     if($self->{diff_timeout} <= 0){
-        return null;
+        return undef;
     }
 
     my ($long_text, $short_text);
@@ -518,9 +525,9 @@ sub diff_half_match {
         return;
     }
 
-    my $hm1 = $diff_half_match_I($long_text, $short_text, $self->ceil(length($long_text)/4.0));
+    my $hm1 = $self->diff_half_match_I($long_text, $short_text, $self->ceil(length($long_text)/4.0));
 
-    my $hm2 = $diff_half_match_I($long_text, $short_text, $self->ceil(length($long_text)/2.0));
+    my $hm2 = $self->diff_half_match_I($long_text, $short_text, $self->ceil(length($long_text)/2.0));
 
     my $hm;
     if(!$hm1 and !$hm2){
@@ -558,8 +565,8 @@ sub diff_half_match_I {
     my $best_common = '';
     my ($best_longtext_a, $best_longtext_b, $best_shorttext_a, $best_shorttext_b);
     while(($j = index $short_text, $seed, $j + 1) != -1){
-        my $prefix_len = $self->diff_common_prefix(substr($long_text,$i),substr($short_text, $j);
-        my $suffix_len = $self->diff_common_prefix(substr($long_text,0,$i),substr($short_text, 0,$j);
+        my $prefix_len = $self->diff_common_prefix(substr($long_text,$i),substr($short_text, $j));
+        my $suffix_len = $self->diff_common_prefix(substr($long_text,0,$i),substr($short_text, 0,$j));
         if(length($best_common) < $suffix_len + $prefix_len){
             $best_common = sprintf "%s%s", substr($short_text, $j - $suffix_len, $j), substr($short_text, $j, $j + $prefix_len);
             $best_longtext_a = substr $long_text, 0, $i - $suffix_len;
@@ -574,6 +581,82 @@ sub diff_half_match_I {
         return;
     }
 }
+
+sub diff_cleanup_semantic {
+    my ($self, $diffs) = @_;
+    
+    my $changes = 0;
+    my $equalities = [];
+    my $equalities_length = 0;
+
+    my $last_equality;
+    my $pointer = 0;
+
+    my $len_insertions1 = 0;
+    my $len_deletions1 = 0;
+
+    my $len_insertions2 = 0;
+    my $len_deletions2 = 0;
+
+    while($pointer < scalar @$diffs){
+        if($diffs->[$pointer][0] == DIFF_EQUAL){
+            $equalities->[$equalities_length++] = $pointer;
+            $len_insertions1 = $len_insertions2;
+            $len_deletions1 = $len_deletions2;
+            $len_insertions2 = 0;
+            $len_deletions2 = 0;
+            $last_equality = $diffs->[$pointer][1];
+        }else{
+            if($diffs->[$pointer][0] == DIFF_INSERT) {
+                $len_insertions2 += length($diffs->[$pointer][1]);
+            }else{
+                $len_deletions2 += length($diffs->[$pointer][1]);
+            }
+            if(defined $last_equality and (length($last_equality) <= max($len_insertions1, $len_deletions1)) and (length($last_equality) <= max($len_insertions2, $len_deletions2))){
+                splice @$diffs, $equalities->[$equalities_length-1],0,[DIFF_DELETE, $last_equality];
+
+                $diffs->[$equalities->[$equalities_length-1] + 1][0] = DIFF_INSERT;
+
+                $equalities_length--;
+                $equalities_length--;
+                $pointer = $equalities_length > 0 ? $equalities->[$equalities_length - 1] : -1;
+                $len_insertions1 = 0;
+                $len_deletions1 = 0;
+                $len_insertions2 = 0;
+                $len_deletions2 = 0;
+                $last_equality = undef;
+                $changes = 1;
+            }
+        }
+        $pointer++;
+    }
+
+    if($changes){
+        $self->diff_cleanup_merge($diffs);
+    }
+    $this->diff_cleanup_semantic_lossless($diffs);
+
+    $pointer = 1;
+    while($pointer < scalar @$diffs){
+        if($diffs->[$pointer - 1][0] == DIFF_DELETE and $diffs->[pointer][0] == DIFF_INSERT){
+            my $deletion = $diffs->[$pointer - 1][1];
+            my $insertion = $diffs->[$pointer][1];
+            my $overlap_len = $self->diff_common_overlap($deletion, $insertion);
+            if($overlap_len){
+                splice @$diffs, $pointer, 0, [DIFF_EQUAL, substr($insertion,0,$overlap_len)];
+                $diffs->[$pointer - 1][1] = substr $deletion, 0, length($deletion) - $overlap_len;
+                $diffs->[$pointer + 1][1] = substr $insertion, $overlap_len;
+                $pointer++;
+            }
+            $pointer++;
+        }
+        $pointer++;
+    }
+}
+
+
+            
+
 
 =head1 AUTHOR
 
